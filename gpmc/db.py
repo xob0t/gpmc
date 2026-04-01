@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import Self
 
@@ -177,11 +178,23 @@ class Storage:
         """
 
         # Prepare the values for each item
-        values = [tuple(item[col] for col in columns) for item in items_dicts]
+        values = [tuple(self._normalize_db_value(item[col]) for col in columns) for item in items_dicts]
 
         # Execute in a transaction
         with self.conn:
             self.conn.executemany(sql, values)
+
+    @staticmethod
+    def _normalize_db_value(value):
+        """Normalize unsupported Python types before binding to SQLite parameters."""
+        if isinstance(value, set):
+            value = sorted(value)
+        if isinstance(value, (dict, list, tuple)):
+            try:
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                return str(value)
+        return value
 
     def delete(self, media_keys: Sequence[str]) -> None:
         """
