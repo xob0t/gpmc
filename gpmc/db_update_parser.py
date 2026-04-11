@@ -1,7 +1,10 @@
 import base64
+import logging
 
 from .models import MediaItem
 from .utils import fixed32_to_float, int32_to_float, int64_to_float, urlsafe_base64
+
+logger = logging.getLogger(__name__)
 
 
 def _get_nested(data: dict, *path: str):
@@ -16,41 +19,19 @@ def _get_nested(data: dict, *path: str):
     return current
 
 
-def _unwrap_scalar(value):
-    """Unwrap common protobuf-decoded scalar wrappers (dict/list nesting)."""
-    while True:
-        if isinstance(value, dict):
-            if "1" in value:
-                value = value["1"]
-                continue
-            if len(value) == 1:
-                value = next(iter(value.values()))
-                continue
-            return value
-        if isinstance(value, list):
-            if not value:
-                return None
-            value = value[0]
-            continue
-        return value
-
-
 def _to_string(value) -> str | None:
-    """Best-effort scalar conversion for protobuf-decoded values that may be nested."""
-    value = _unwrap_scalar(value)
-
+    """Convert a scalar value to string."""
     if value is None:
         return None
     if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
+        return value.decode("utf-8", errors="replace")
     if isinstance(value, str):
         return value
     return str(value)
 
 
 def _to_int(value, default: int = 0) -> int:
-    """Best-effort int conversion for protobuf-decoded values."""
-    value = _unwrap_scalar(value)
+    """Convert a scalar value to int."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -59,11 +40,6 @@ def _to_int(value, default: int = 0) -> int:
         return value
     if isinstance(value, float):
         return int(value)
-    if isinstance(value, bytes):
-        try:
-            return int(value.decode("utf-8", errors="ignore"))
-        except ValueError:
-            return default
     if isinstance(value, str):
         try:
             return int(value)
@@ -84,10 +60,7 @@ def _to_int32_float(value) -> float | None:
     raw = _to_optional_int(value)
     if raw is None:
         return None
-    try:
-        return int32_to_float(raw)
-    except Exception:
-        return None
+    return int32_to_float(raw)
 
 
 def _to_int64_float(value) -> float | None:
@@ -95,10 +68,7 @@ def _to_int64_float(value) -> float | None:
     raw = _to_optional_int(value)
     if raw is None:
         return None
-    try:
-        return int64_to_float(raw)
-    except Exception:
-        return None
+    return int64_to_float(raw)
 
 
 def _to_fixed32_float(value) -> float | None:
@@ -106,10 +76,7 @@ def _to_fixed32_float(value) -> float | None:
     raw = _to_optional_int(value)
     if raw is None:
         return None
-    try:
-        return fixed32_to_float(raw)
-    except Exception:
-        return None
+    return fixed32_to_float(raw)
 
 
 def _parse_media_item(d: dict) -> MediaItem:
@@ -160,14 +127,14 @@ def _parse_media_item(d: dict) -> MediaItem:
         type=_to_int(_get_nested(d5, "1")),
         collection_id=_to_string(_get_nested(d2, "1", "1")) or "",
         size_bytes=_to_int(d2.get("10")),
-        timezone_offset=_to_optional_int(d2.get("8")),
+        timezone_offset=_to_int(d2.get("8")),
         utc_timestamp=_to_int(d2.get("7")),
         server_creation_timestamp=_to_int(d2.get("9")),
         upload_status=_to_optional_int(d2.get("11")),
         quota_charged_bytes=_to_int(_get_nested(d2, "35", "2")),
         origin=origin_map.get(_to_int(_get_nested(d2, "30", "1"), 1), "self"),
         content_version=_to_int(d2.get("26")),
-        trash_timestamp=_to_optional_int(_get_nested(d2, "16", "3")),
+        trash_timestamp=_to_int(_get_nested(d2, "16", "3")),
         is_archived=_to_int(_get_nested(d2, "29", "1")) == 1,
         is_favorite=_to_int(_get_nested(d2, "31", "1")) == 1,
         is_locked=_to_int(_get_nested(d2, "39", "1")) == 1,
@@ -272,16 +239,17 @@ def parse_db_update(data: dict) -> tuple[str, str | None, list[MediaItem], list[
     resume_token = _to_string(root.get("1")) or ""
     sync_token = _to_string(root.get("6")) or ""
 
-    # Parse media item
+    # Parse media items
     remote_media = []
     media_items = _get_items_list(data, "2")
     for d in media_items:
         if not isinstance(d, dict):
+            logger.warning("Skipping non-dict media item entry: %s", type(d).__name__)
             continue
         try:
             remote_media.append(_parse_media_item(d))
         except Exception:
-            continue
+            logger.warning("Failed to parse media item (media_key=%s)", d.get("1", "unknown"), exc_info=True)
 
     deletions = _get_items_list(data, "9")
     media_keys_to_delete = [media_key for d in deletions if (media_key := _parse_deletion_item(d))]
