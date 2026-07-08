@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--use-quota", action="store_true", help="Uploaded files will count against your Google Photos storage quota.")
     parser.add_argument("--saver", action="store_true", help="Upload files in storage saver quality.")
     parser.add_argument("--timeout", type=int, default=30, help=f"Requests timeout, seconds. Defaults to {DEFAULT_TIMEOUT}.")
+    parser.add_argument("--skip-existing-filenames", action="store_true", help="Synchronize cache and skip uploading files with duplicate filenames.")
     parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level (default: INFO)")
 
     filter_group = parser.add_argument_group("File Filter Options")
@@ -65,5 +66,10 @@ def main():
         filter_regex=args.regex,
         filter_ignore_case=args.ignore_case,
         filter_path=args.match_path,
+        skip_existing_filenames=args.skip_existing_filenames,
     )
     pp(output)
+
+
+if __name__ == "__main__":
+    main()

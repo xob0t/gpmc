@@ -12,7 +12,8 @@ Google Photos client based on reverse engineered mobile API.
 
 - Unlimited uploads in original quality (can be disabled).
 - Use as a CLI tool or Python library.
-- Skips files already present in your account.
+- Skips files already present in your account (based on hash check).
+- Optional filename-based duplicate check (`--skip-existing-filenames`) to prevent re-uploading files with modified EXIF metadata if the filename already exists in the destination.
 - Upload individual files or entire directories, with optional recursive scanning.
 - Album creation based on directory structure or custom album name.
 - Real-time progress tracking.
@@ -86,8 +87,12 @@ options:
   --use-quota           Uploaded files will count against your Google Photos storage quota.
   --saver               Upload files in storage saver quality.
   --timeout TIMEOUT     Requests timeout, seconds. Defaults to 60.
+  --skip-existing-filenames
+                        Synchronize local media cache and skip uploading files
+                        with duplicate filenames.
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the logging level (default: INFO)
+
 
 File Filter Options:
   --filter FILTER       Filter expression.

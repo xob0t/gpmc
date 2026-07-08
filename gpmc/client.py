@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal, TypedDict
+from threading import Lock
+from datetime import datetime
 
 from rich.console import Group
 from rich.live import Live
@@ -27,6 +29,7 @@ from . import utils
 from .api import DEFAULT_TIMEOUT, Api
 from .db import Storage
 from .db_update_parser import parse_db_update
+from .models import MediaItem
 from .exceptions import SyncCycleError
 from .hash_handler import calculate_sha1_hash, convert_sha1_hash
 
@@ -81,6 +84,7 @@ class Client:
         self.api = Api(self.auth_data, proxy=proxy, language=self.language, timeout=timeout)
         self.cache_dir = Path.home() / ".gpmc" / email
         self.db_path = self.cache_dir / "storage.db"
+        self._log_lock = Lock()
 
     def _handle_auth_data(self, auth_data: str | None) -> str:
         """
@@ -104,8 +108,19 @@ class Client:
 
         raise ValueError("`GP_AUTH_DATA` environment variable not set. Create it or provide `auth_data` as an argument.")
 
+    def _log_failed_or_skipped(self, filepath: str, status: str, reason: str) -> None:
+        """Log a failed or skipped file to the dedicated log."""
+        log_file = Path("failed_skipped_files.log")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._log_lock:
+            try:
+                with log_file.open("a", encoding="utf-8") as f:
+                    f.write(f"[{timestamp}] {status}: {filepath} - {reason}\n")
+            except Exception as e:
+                self.logger.debug(f"Failed to write to failed/skipped files log: {e}")
+
     def _upload_file(
-        self, file_path: str | Path, hash_value: bytes | str | None, progress: Progress, force_upload: bool, use_quota: bool, saver: bool, delete_from_host: bool = False, filename: str | None = None
+        self, file_path: str | Path, hash_value: bytes | str | None, progress: Progress, force_upload: bool, use_quota: bool, saver: bool, delete_from_host: bool = False, filename: str | None = None, skip_existing_filenames: bool = False
     ) -> dict[str, str]:
         """
         Upload a single file to Google Photos.
@@ -120,6 +135,7 @@ class Client:
             saver: Upload files in storage saver quality.
             delete_from_host: Whether to delete the file from host immediately after successful upload.
             filename: Custom filename to use instead of the actual filename.
+            skip_existing_filenames: Skip uploading if a file with the same name already exists in local cache.
 
         Returns:
             dict[str, str]: A dictionary mapping the absolute file path to its Google Photos media key.
@@ -148,6 +164,17 @@ class Client:
                         file_path.unlink()
                     return {file_path.absolute().as_posix(): remote_media_key}
 
+                # Secondary check: filename already exists in destination cache
+                if skip_existing_filenames:
+                    try:
+                        with Storage(self.db_path) as storage:
+                            if storage.filename_exists(effective_filename):
+                                self.logger.warning(f"Filename '{effective_filename}' already exists in destination. Skipping file: {file_path.name}")
+                                self._log_failed_or_skipped(file_path.absolute().as_posix(), "SKIP", "Filename already exists in destination")
+                                return {}
+                    except Exception as e:
+                        self.logger.debug(f"Failed to check duplicate filename for {file_path}: {e}")
+
             upload_token = self.api.get_upload_token(hash_b64, file_size)
             progress.reset(task_id=file_progress_id)
             progress.update(task_id=file_progress_id, description=f"Uploading: {file_path.name}")
@@ -171,12 +198,42 @@ class Client:
                 quality=quality,
             )
 
+            # Record the uploaded file in local remote_media cache database
+            try:
+                mimetype, _ = mimetypes.guess_type(file_path)
+                is_video = mimetype and mimetype.startswith("video/")
+                item_type = 2 if is_video else 1
+                
+                new_item = MediaItem(
+                    media_key=media_key,
+                    file_name=effective_filename,
+                    dedup_key="",
+                    is_canonical=True,
+                    type=item_type,
+                    caption="",
+                    collection_id="",
+                    size_bytes=file_size,
+                    quota_charged_bytes=0,
+                    origin="",
+                    content_version=1,
+                    utc_timestamp=last_modified_timestamp,
+                    server_creation_timestamp=last_modified_timestamp,
+                )
+                with Storage(self.db_path) as storage:
+                    storage.update([new_item])
+            except Exception as db_err:
+                self.logger.debug(f"Failed to record uploaded media in database cache: {db_err}")
+
             # Delete file immediately after successful upload if requested
             if delete_from_host:
                 self.logger.info(f"{file_path} deleting from host")
                 file_path.unlink()
 
             return {file_path.absolute().as_posix(): media_key}
+        except Exception as e:
+            self.logger.error(f"Error uploading file {file_path}: {e}")
+            self._log_failed_or_skipped(file_path.absolute().as_posix(), "FAIL", str(e))
+            raise
         finally:
             progress.update(file_progress_id, visible=False)
 
@@ -299,6 +356,7 @@ class Client:
         filter_regex: bool = False,
         filter_ignore_case: bool = False,
         filter_path: bool = False,
+        skip_existing_filenames: bool = False,
     ) -> dict[str, str]:
         """
         Upload one or more files or directories to Google Photos.
@@ -339,6 +397,7 @@ class Client:
             filter_regex: If True, treat the expression as a regular expression.
             filter_ignore_case: If True, perform case-insensitive matching.
             filter_path: If True, check for matches in the full path instead of just the filename.
+            skip_existing_filenames: If True, syncs cache first and skips duplicate filenames.
 
         Returns:
             dict[str, str]: A dictionary mapping absolute file paths to their Google Photos media keys.
@@ -351,6 +410,10 @@ class Client:
             TypeError: If `target` is not a file path, directory path, or a sequence of such paths.
             ValueError: If no valid media files are found to upload.
         """
+        if skip_existing_filenames:
+            self.logger.info("Synchronizing local media cache from Google Photos...")
+            self.update_cache(show_progress=show_progress)
+
         path_hash_pairs = self._handle_target_input(
             target,
             recursive,
@@ -369,6 +432,7 @@ class Client:
             use_quota=use_quota,
             saver=saver,
             delete_from_host=delete_from_host,
+            skip_existing_filenames=skip_existing_filenames,
         )
 
         if album_name:
@@ -490,7 +554,7 @@ class Client:
         finally:
             progress.update(hash_calc_progress_id, visible=False)
 
-    def _upload_concurrently(self, path_hash_pairs: TargetMapping, threads: int, show_progress: bool, force_upload: bool, use_quota: bool, saver: bool, delete_from_host: bool) -> dict[str, str]:
+    def _upload_concurrently(self, path_hash_pairs: TargetMapping, threads: int, show_progress: bool, force_upload: bool, use_quota: bool, saver: bool, delete_from_host: bool, skip_existing_filenames: bool = False) -> dict[str, str]:
         """
         Upload files concurrently to Google Photos.
 
@@ -503,6 +567,7 @@ class Client:
             use_quota: Count uploads against storage quota.
             saver: Upload in storage saver quality.
             delete_from_host: Delete each file immediately after successful upload.
+            skip_existing_filenames: Skip uploading if filename exists in local cache DB.
 
         Returns:
             dict[str, str]: Dictionary mapping file paths to media keys.
@@ -546,7 +611,7 @@ class Client:
                     filename = None
                 futures[
                     executor.submit(
-                        self._upload_file, path, hash_value, progress=file_progress, force_upload=force_upload, use_quota=use_quota, saver=saver, delete_from_host=delete_from_host, filename=filename
+                        self._upload_file, path, hash_value, progress=file_progress, force_upload=force_upload, use_quota=use_quota, saver=saver, delete_from_host=delete_from_host, filename=filename, skip_existing_filenames=skip_existing_filenames
                     )
                 ] = (path, value)
             for future in as_completed(futures):
