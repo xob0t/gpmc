@@ -8,7 +8,7 @@ packages = ["gpmc"]
 [project]
 name = "gpmc"
 version = "0.8.0"
-description = "Google Photos client based on reverse engineered mobile API."
+description = "Google Photos Mobile Client based on the reverse-engineered mobile API."
 authors = [{ name = "xob0t" }]
 readme = "README.md"
 license = "MIT"
@@ -47,7 +47,7 @@ select = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/xob0t/google_photos_mobile_client"
+Homepage = "https://github.com/xob0t/gpmc"
 
 [project.scripts]
 gpmc = "gpmc.cli:main"
