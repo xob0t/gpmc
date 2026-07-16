@@ -1,6 +1,6 @@
 # GPMC
 
-Google Photos Mobile Client based on the reverse-engineered mobile API.
+Google Photos Mobile Client based on the reverse-engineered mobile API. “Mobile” refers to the API it uses, not the platforms it runs on—GPMC is a cross-platform Python library and CLI.
 
 ---
 
