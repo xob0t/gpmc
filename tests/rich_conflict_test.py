@@ -1,6 +1,8 @@
 import unittest
-from rich.live import Live
+
 from rich.errors import LiveError
+from rich.live import Live
+
 from gpmc import Client
 
 
@@ -16,9 +18,8 @@ class TestUpload(unittest.TestCase):
 
     def test_rich_live_conflict(self):
         """Test conflict"""
-        with self.assertRaises(LiveError):
-            with Live():
-                self.client.upload(target=self.image_file_path, show_progress=True)
+        with self.assertRaises(LiveError), Live():
+            self.client.upload(target=self.image_file_path, show_progress=True)
 
 
 if __name__ == "__main__":

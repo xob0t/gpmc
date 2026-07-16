@@ -9,7 +9,7 @@ from .models import MediaItem
 
 class Storage:
     # Database schema version - increment when schema changes
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, db_path: str | Path) -> None:
         self.conn = sqlite3.connect(db_path)
@@ -139,6 +139,10 @@ class Storage:
             micro_video_width INTEGER,
             micro_video_height INTEGER
         )
+        """)
+
+        self.conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_remote_media_file_name ON remote_media (file_name)
         """)
 
         self.conn.execute("""

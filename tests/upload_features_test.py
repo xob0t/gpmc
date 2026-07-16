@@ -1,27 +1,27 @@
-import unittest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
-import tempfile
 import shutil
-import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from gpmc.client import Client
 from gpmc.db import Storage
 from gpmc.models import MediaItem
+
 
 class TestUploadFeatures(unittest.TestCase):
     def setUp(self):
         # Create a temporary directory for tests
         self.test_dir = tempfile.mkdtemp()
         self.db_path = Path(self.test_dir) / "test_storage.db"
-        
+
         # Create some dummy files to "upload"
         self.file1 = Path(self.test_dir) / "image1.jpg"
         self.file1.write_bytes(b"dummy image data 1")
-        
+
         self.file2 = Path(self.test_dir) / "image2.jpg"
         self.file2.write_bytes(b"dummy image data 2")
-        
+
         # Clean up any existing failed_skipped_files.log
         self.log_file = Path("failed_skipped_files.log")
         if self.log_file.exists():
@@ -30,7 +30,7 @@ class TestUploadFeatures(unittest.TestCase):
         # Mock auth data check to not raise ValueError
         with patch('gpmc.client.Client._handle_auth_data', return_value="androidId=123&app=com.google.android.apps.photos&Email=test@gmail.com"):
             self.client = Client(auth_data="dummy")
-        
+
         # Override db_path and cache_dir to temp dir
         self.client.db_path = self.db_path
         self.client.cache_dir = Path(self.test_dir)
@@ -45,7 +45,7 @@ class TestUploadFeatures(unittest.TestCase):
         with Storage(self.db_path) as storage:
             # 1. Initially False
             self.assertFalse(storage.filename_exists("image1.jpg"))
-            
+
             # 2. Insert remote media and test filename_exists
             item = MediaItem(
                 media_key="key_1",
@@ -93,9 +93,9 @@ class TestUploadFeatures(unittest.TestCase):
             self.assertTrue(storage.filename_exists("image1.jpg"))
 
     @patch('gpmc.client.Api')
-    def test_duplicate_filename_fallback_skips_and_logs(self, MockApi):
+    def test_duplicate_filename_fallback_skips_and_logs(self, mock_api_class):
         """Test that a file whose hash is unique but filename already exists is skipped and logged."""
-        mock_api = MockApi.return_value
+        mock_api = mock_api_class.return_value
         # Hash is unique, so remote check returns None
         mock_api.find_remote_media_by_hash.return_value = None
         self.client.api = mock_api
@@ -162,7 +162,7 @@ class TestUploadFeatures(unittest.TestCase):
             res_skip = self.client.upload(target=self.file1, skip_existing_filenames=True)
             mock_update_cache.assert_called_once()
             self.assertEqual(res_skip, {})
-        
+
         # Verify it was logged in failed_skipped_files.log
         self.assertTrue(self.log_file.exists())
         log_content = self.log_file.read_text(encoding="utf-8")
@@ -171,17 +171,17 @@ class TestUploadFeatures(unittest.TestCase):
         self.assertIn("Filename already exists in destination", log_content)
 
     @patch('gpmc.client.Api')
-    def test_upload_failure_logged(self, MockApi):
+    def test_upload_failure_logged(self, mock_api_class):
         """Test that a file whose upload fails is logged in failed_skipped_files.log."""
-        mock_api = MockApi.return_value
+        mock_api = mock_api_class.return_value
         mock_api.find_remote_media_by_hash.return_value = None
         # Make get_upload_token raise an exception to simulate failure
         mock_api.get_upload_token.side_effect = Exception("Network timeout")
         self.client.api = mock_api
 
         # Attempt uploading file1, which will fail
-        res = self.client.upload(target=self.file1)
-        
+        self.client.upload(target=self.file1)
+
         # Verify it was logged in failed_skipped_files.log
         self.assertTrue(self.log_file.exists())
         log_content = self.log_file.read_text(encoding="utf-8")
