@@ -9,7 +9,7 @@ from .models import MediaItem
 
 class Storage:
     # Database schema version - increment when schema changes
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, db_path: str | Path) -> None:
         self.conn = sqlite3.connect(db_path)
@@ -142,6 +142,10 @@ class Storage:
         """)
 
         self.conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_remote_media_file_name ON remote_media (file_name)
+        """)
+
+        self.conn.execute("""
         CREATE TABLE IF NOT EXISTS state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             sync_token TEXT,
@@ -253,6 +257,14 @@ class Storage:
         """ """
         with self.conn:
             self.conn.execute("UPDATE state SET init_complete = ? WHERE id = 1", (state,))
+
+    def filename_exists(self, filename: str) -> bool:
+        """Check if a filename exists in remote_media."""
+        cursor = self.conn.execute(
+            "SELECT 1 FROM remote_media WHERE file_name = ? LIMIT 1",
+            (filename,)
+        )
+        return cursor.fetchone() is not None
 
     def close(self) -> None:
         """Close the database connection."""
