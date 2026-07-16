@@ -58,6 +58,18 @@ print(output)
 gpmc "/path/to/media_file.jpg" --progress --auth_data "androidId=216e583113f43c75&app=com.google.android.app..."
 ```
 
+For programmatic consumers, `--json-progress` writes one versioned JSON object per line (NDJSON) to stderr while keeping the final result on stdout:
+
+```bash
+gpmc "/path/to/media_file.jpg" --json-progress 2>progress.ndjson
+```
+
+Each event has a stable discriminator and version, for example:
+
+```json
+{"version":1,"type":"progress","operation":"upload","phase":"uploading","path":"/path/to/media_file.jpg","filename":"media_file.jpg","bytes_completed":1048576,"bytes_total":8388608}
+```
+
 ```text
 usage: gpmc [-h] [--auth_data AUTH_DATA] [--album ALBUM] [--proxy PROXY] [--progress] [--recursive] [--threads THREADS] [--force-upload] [--delete-from-host] [--use-quota] [--saver] [--timeout TIMEOUT]
             [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--filter FILTER] [--exclude] [--regex] [--ignore-case] [--match-path]

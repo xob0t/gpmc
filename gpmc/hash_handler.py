@@ -1,11 +1,17 @@
 import base64
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.progress import Progress, TaskID
 
 
-def calculate_sha1_hash(file_path: Path, progress: Progress, file_progress_id: TaskID) -> tuple[bytes, str]:
+def calculate_sha1_hash(
+    file_path: Path,
+    progress: Progress,
+    file_progress_id: TaskID,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> tuple[bytes, str]:
     """
     Calculate the SHA1 hash of a file in chunks, with progress tracking.
 
@@ -20,10 +26,18 @@ def calculate_sha1_hash(file_path: Path, progress: Progress, file_progress_id: T
     progress.update(task_id=file_progress_id, description=f"Calculating Hash: {file_path.name}")
 
     hash_sha1 = hashlib.sha1()
+    total_bytes = file_path.stat().st_size
+    completed_bytes = 0
+
+    if on_progress:
+        on_progress(0, total_bytes)
 
     with progress.open(file_path, "rb", task_id=file_progress_id) as file:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             hash_sha1.update(chunk)
+            completed_bytes += len(chunk)
+            if on_progress:
+                on_progress(completed_bytes, total_bytes)
 
     hash_bytes = hash_sha1.digest()
     hash_b64 = base64.b64encode(hash_bytes).decode("utf-8")

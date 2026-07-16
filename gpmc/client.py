@@ -2,13 +2,14 @@ import mimetypes
 import os
 import re
 import signal
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Literal, TypedDict
+from typing import IO, Any, Literal, TypedDict
 
 from rich.console import Group
 from rich.live import Live
@@ -38,6 +39,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
 LogLevel = Literal["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"]
+UploadPhase = Literal["hashing", "checking", "uploading", "finalizing", "complete", "skipped", "error"]
 
 
 class UploadOptions(TypedDict, total=False):
@@ -50,6 +52,45 @@ class UploadOptions(TypedDict, total=False):
 
 
 TargetMapping = Mapping[Path, bytes | str | None | UploadOptions]
+
+
+class UploadProgressEvent(TypedDict):
+    """Machine-readable progress for an upload operation."""
+
+    version: int
+    type: Literal["progress"]
+    operation: Literal["upload"]
+    phase: UploadPhase
+    path: str
+    filename: str
+    bytes_completed: int
+    bytes_total: int
+
+
+ProgressCallback = Callable[[UploadProgressEvent], None]
+
+
+class _ProgressReader:
+    """Proxy a binary file and periodically report bytes consumed by requests."""
+
+    def __init__(self, file: IO[bytes], total: int, callback: Callable[[int, int], None]) -> None:
+        self._file = file
+        self._total = total
+        self._callback = callback
+        self._completed = 0
+        self._last_report = 0.0
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._file.read(size)
+        self._completed += len(data)
+        now = time.monotonic()
+        if now - self._last_report >= 0.25 or not data or self._completed >= self._total:
+            self._last_report = now
+            self._callback(self._completed, self._total)
+        return data
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._file, name)
 
 
 class Client:
@@ -130,6 +171,7 @@ class Client:
         delete_from_host: bool = False,
         filename: str | None = None,
         skip_existing_filenames: bool = False,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, str]:
         """
         Upload a single file to Google Photos.
@@ -161,14 +203,34 @@ class Client:
             file_size = file_path.stat().st_size
             effective_filename = filename if filename else file_path.name
 
+            def report(phase: UploadPhase, completed: int = 0) -> None:
+                if not progress_callback:
+                    return
+                event: UploadProgressEvent = {
+                    "version": 1,
+                    "type": "progress",
+                    "operation": "upload",
+                    "phase": phase,
+                    "path": file_path.absolute().as_posix(),
+                    "filename": effective_filename,
+                    "bytes_completed": completed,
+                    "bytes_total": file_size,
+                }
+                try:
+                    progress_callback(event)
+                except Exception as error:
+                    self.logger.warning(f"Progress callback failed: {error}")
+
             if hash_value:
                 hash_bytes, hash_b64 = convert_sha1_hash(hash_value)
             else:
-                hash_bytes, hash_b64 = calculate_sha1_hash(file_path, progress, file_progress_id)
+                hash_bytes, hash_b64 = calculate_sha1_hash(file_path, progress, file_progress_id, lambda completed, _total: report("hashing", completed))
 
             if not force_upload:
+                report("checking")
                 progress.update(task_id=file_progress_id, description=f"Checking: {file_path.name}")
                 if remote_media_key := self.api.find_remote_media_by_hash(hash_bytes):
+                    report("skipped", file_size)
                     if delete_from_host:
                         self.logger.info(f"{file_path} deleting from host")
                         file_path.unlink()
@@ -178,7 +240,9 @@ class Client:
             progress.reset(task_id=file_progress_id)
             progress.update(task_id=file_progress_id, description=f"Uploading: {file_path.name}")
             with progress.open(file_path, "rb", task_id=file_progress_id) as file:
-                upload_response = self.api.upload_file(file=file, upload_token=upload_token)
+                report("uploading")
+                upload_response = self.api.upload_file(file=_ProgressReader(file, file_size, lambda completed, _total: report("uploading", completed)), upload_token=upload_token)
+            report("finalizing", file_size)
             progress.update(task_id=file_progress_id, description=f"Finalizing Upload: {file_path.name}")
             last_modified_timestamp = int(file_path.stat().st_mtime)
             model = "Pixel XL"
@@ -228,6 +292,7 @@ class Client:
                 self.logger.info(f"{file_path} deleting from host")
                 file_path.unlink()
 
+            report("complete", file_size)
             return {file_path.absolute().as_posix(): media_key}
         except Exception as e:
             self.logger.error(f"Error uploading file {file_path}: {e}")
@@ -356,6 +421,7 @@ class Client:
         filter_ignore_case: bool = False,
         filter_path: bool = False,
         skip_existing_filenames: bool = False,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, str]:
         """
         Upload one or more files or directories to Google Photos.
@@ -397,6 +463,7 @@ class Client:
             filter_ignore_case: If True, perform case-insensitive matching.
             filter_path: If True, check for matches in the full path instead of just the filename.
             skip_existing_filenames: If True, syncs cache first and skips duplicate filenames.
+            progress_callback: Optional callback receiving versioned upload progress events.
 
         Returns:
             dict[str, str]: A dictionary mapping absolute file paths to their Google Photos media keys.
@@ -432,6 +499,7 @@ class Client:
             saver=saver,
             delete_from_host=delete_from_host,
             skip_existing_filenames=skip_existing_filenames,
+            progress_callback=progress_callback,
         )
 
         if album_name:
@@ -563,6 +631,7 @@ class Client:
         saver: bool,
         delete_from_host: bool,
         skip_existing_filenames: bool = False,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, str]:
         """
         Upload files concurrently to Google Photos.
@@ -671,6 +740,7 @@ class Client:
                         delete_from_host=delete_from_host,
                         filename=filename,
                         skip_existing_filenames=skip_existing_filenames,
+                        progress_callback=progress_callback,
                     )
                 ] = (path, value)
             for future in as_completed(futures):
@@ -679,6 +749,23 @@ class Client:
                     media_key_dict = future.result()
                     uploaded_files = uploaded_files | media_key_dict
                 except Exception as e:
+                    if progress_callback:
+                        failed_path = Path(target[0])
+                        try:
+                            progress_callback(
+                                {
+                                    "version": 1,
+                                    "type": "progress",
+                                    "operation": "upload",
+                                    "phase": "error",
+                                    "path": failed_path.absolute().as_posix(),
+                                    "filename": failed_path.name,
+                                    "bytes_completed": 0,
+                                    "bytes_total": failed_path.stat().st_size,
+                                }
+                            )
+                        except Exception as error:
+                            self.logger.warning(f"Progress callback failed: {error}")
                     self.logger.error(f"Error uploading file {target[0]}: {e}")
                     upload_error_count += 1
                     overall_progress.update(task_id=overall_task_id, description=f"[bold red] Errors: {upload_error_count}")

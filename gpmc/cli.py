@@ -1,4 +1,7 @@
 import argparse
+import json
+import sys
+import threading
 from pprint import pp
 
 from .api import DEFAULT_TIMEOUT
@@ -23,6 +26,7 @@ def main():
     )
     parser.add_argument("--proxy", type=str, help="Proxy to use. Format: `protocol://username:password@host:port`")
     parser.add_argument("--progress", action="store_true", help="Display upload progress.")
+    parser.add_argument("--json-progress", action="store_true", help="Emit versioned NDJSON progress events to stderr.")
     parser.add_argument("--recursive", action="store_true", help="Scan the directory recursively.")
     parser.add_argument("--threads", type=int, default=1, help="Number of threads to run uploads with. Defaults to 1.")
     parser.add_argument("--force-upload", action="store_true", help="Upload files regardless of their presence in Google Photos (determined by hash).")
@@ -41,6 +45,12 @@ def main():
     filter_group.add_argument("--match-path", action="store_true", help="Check for matches in the path, not just the filename.")
 
     args = parser.parse_args()
+
+    progress_lock = threading.Lock()
+
+    def emit_json_progress(event):
+        with progress_lock:
+            print(json.dumps(event, separators=(",", ":")), file=sys.stderr, flush=True)
 
     if (args.exclude or args.regex or args.ignore_case or args.match_path) and not args.filter:
         parser.error("--filter is required when using any of --exclude, --regex, --ignore-case, or --match-path")
@@ -67,6 +77,7 @@ def main():
         filter_ignore_case=args.ignore_case,
         filter_path=args.match_path,
         skip_existing_filenames=args.skip_existing_filenames,
+        progress_callback=emit_json_progress if args.json_progress else None,
     )
     pp(output)
 

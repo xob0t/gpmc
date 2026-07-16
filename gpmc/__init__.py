@@ -1,3 +1,3 @@
-from gpmc.client import Client, UploadOptions
+from gpmc.client import Client, ProgressCallback, UploadOptions, UploadProgressEvent
 
-ALL = [Client, UploadOptions]
+ALL = [Client, ProgressCallback, UploadOptions, UploadProgressEvent]
