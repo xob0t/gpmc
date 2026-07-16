@@ -26,7 +26,7 @@ Google Photos Mobile Client based on the reverse-engineered mobile API. “Mobil
 Run the command:
 
 ```bash
-pip install https://github.com/xob0t/gpmc/archive/refs/heads/main.zip --force-reinstall
+pip install --upgrade gpmc
 ```
 
 ## Example Usage
