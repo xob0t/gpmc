@@ -183,6 +183,7 @@ You only need to do this once.
 ## Tools based on gpmc
 
 - Dockerized folder monitoring [Google Photos Uploader](https://github.com/giuseppe99barchetta/Google-Photos-Uploader) by @giuseppe99barchetta
+- [GPMC Daemon](https://github.com/robocrax/gpmc-daemon) Another service app with multiple profiles with built-in syncthing to sync from your phone
 
 ## My Other Google Photos Scripts And Tools
 
