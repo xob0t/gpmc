@@ -183,6 +183,7 @@ You only need to do this once.
 ## Tools based on gpmc
 
 - Dockerized folder monitoring [Google Photos Uploader](https://github.com/giuseppe99barchetta/Google-Photos-Uploader) by @giuseppe99barchetta
+- Rootless MicroG / ReVanced auth extractor [GPMC Auth Extractor](https://github.com/mian196/gpmc-auth-extractor) by @mian196
 
 ## My Other Google Photos Scripts And Tools
 
