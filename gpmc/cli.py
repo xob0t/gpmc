@@ -57,6 +57,9 @@ def main():
     if (args.exclude or args.regex or args.ignore_case or args.match_path) and not args.filter:
         parser.error("--filter is required when using any of --exclude, --regex, --ignore-case, or --match-path")
 
+    if args.threads is not None and args.threads < 1:
+        parser.error("--threads must be a positive integer")
+
     client = Client(
         auth_data=args.auth_data,
         timeout=args.timeout,
